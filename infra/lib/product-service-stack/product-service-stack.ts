@@ -3,23 +3,12 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as cdk from 'aws-cdk-lib';
 import * as path from 'path';
 import { Construct } from 'constructs';
-import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 
 export class ProductServiceStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Import existing Products DynamoDB table
-    const productsTable = dynamodb.Table.fromTableName(
-      this,
-      'Products',
-      'Products',
-    );
-
-    // Import existing Stock DynamoDB table
-    const stockTable = dynamodb.Table.fromTableName(this, 'Stock', 'Stock');
-
-    // Define the getProductsList Lambda function
+    // Lambda function for /products
     const getProductsListLambda = new lambda.Function(
       this,
       'getProductsListLambda',
@@ -29,14 +18,10 @@ export class ProductServiceStack extends cdk.Stack {
         code: lambda.Code.fromAsset(path.join(__dirname, './')),
         memorySize: 1024,
         timeout: cdk.Duration.seconds(5),
-        environment: {
-          PRODUCTS_TABLE: productsTable.tableName,
-          STOCK_TABLE: stockTable.tableName,
-        },
       },
     );
 
-    // Define the getProductsById Lambda function
+    // Lambda function for /products/{productId}
     const getProductByIdLambda = new lambda.Function(
       this,
       'getProductByIdLambda',
@@ -46,19 +31,8 @@ export class ProductServiceStack extends cdk.Stack {
         code: lambda.Code.fromAsset(path.join(__dirname, './')),
         memorySize: 1024,
         timeout: cdk.Duration.seconds(5),
-        environment: {
-          PRODUCTS_TABLE: productsTable.tableName,
-          STOCK_TABLE: stockTable.tableName,
-        },
       },
     );
-
-    // Grant permissions for Lambdas to read from the tables
-    productsTable.grantReadData(getProductsListLambda);
-    productsTable.grantReadData(getProductByIdLambda);
-
-    stockTable.grantReadData(getProductsListLambda);
-    stockTable.grantReadData(getProductByIdLambda);
 
     // API Gateway setup
     const api = new apigateway.RestApi(this, 'ProductServiceApi', {
@@ -67,17 +41,18 @@ export class ProductServiceStack extends cdk.Stack {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization'],
       },
     });
 
-    // /products endpoint for GET method
+    // Endpoint /products
     const productsResource = api.root.addResource('products');
     productsResource.addMethod(
       'GET',
       new apigateway.LambdaIntegration(getProductsListLambda),
     );
 
-    // /products/{productId} endpoint for GET method
+    // Endpoint /products/{productId}
     const productByIdResource = productsResource.addResource('{productId}');
     productByIdResource.addMethod(
       'GET',
