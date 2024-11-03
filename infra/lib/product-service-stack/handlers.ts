@@ -1,15 +1,29 @@
-import { Handler } from 'aws-lambda';
+import { Handler, APIGatewayProxyEvent, S3Event, S3Handler } from 'aws-lambda';
 import {
   DynamoDBClient,
   GetItemCommand,
   ScanCommand,
   PutItemCommand,
 } from '@aws-sdk/client-dynamodb';
+import * as csv from 'csv-parser';
+import * as stream from 'stream';
+import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
+
+const pipeline = promisify(stream.pipeline);
 
 const dynamoDB = new DynamoDBClient({ region: 'us-west-2' });
 const productsTable = process.env.PRODUCTS_TABLE || 'Products';
 const stockTable = process.env.STOCK_TABLE || 'Stock';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+
+const s3Client = new S3Client({ region: 'us-west-2' });
+const bucketName = process.env.BUCKET_NAME || '';
 
 // Lambda function to retrieve the full array of products
 export const getProductsList: Handler = async () => {
@@ -196,5 +210,87 @@ export const createProduct: Handler = async (event) => {
       },
       body: JSON.stringify({ error: 'Error creating product' }),
     };
+  }
+};
+
+// Lambda function to generate a signed URL for uploading a file
+export const importProductsFile: Handler = async (
+  event: APIGatewayProxyEvent,
+) => {
+  try {
+    // Extract the file name from query string parameters
+    const fileName = event.queryStringParameters?.name;
+    if (!fileName) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          message: 'File name is required as a query parameter',
+        }),
+      };
+    }
+
+    // Define the S3 key with the "uploaded/" prefix
+    const fileKey = `uploaded/${fileName}`;
+
+    // Generate a signed URL for PUT operation
+    const signedUrl = await getSignedUrl(
+      s3Client,
+      new PutObjectCommand({
+        Bucket: bucketName,
+        Key: fileKey,
+        ContentType: 'text/csv', // Assuming CSV files for product data
+      }),
+      { expiresIn: 3600 },
+    ); // URL valid for 1 hour
+
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET',
+      },
+      body: JSON.stringify({ signedUrl }),
+    };
+  } catch (error) {
+    console.error('Error generating signed URL:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ message: 'Failed to generate signed URL' }),
+    };
+  }
+};
+
+export const importFileParser: S3Handler = async (event: S3Event) => {
+  for (const record of event.Records) {
+    const objectKey = record.s3.object.key;
+
+    try {
+      const getObjectCommand = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+      });
+
+      const response = await s3Client.send(getObjectCommand);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const results: any[] = [];
+
+      await pipeline(
+        response.Body as stream.Readable,
+        csv(),
+        new stream.Writable({
+          objectMode: true,
+          write(data, _, callback) {
+            console.log('Parsed record:', data);
+            results.push(data);
+            callback();
+          },
+        }),
+      );
+
+      console.log('Completed parsing file:', objectKey);
+      console.log('Parsed records:', results);
+    } catch (error) {
+      console.error(`Error processing file ${objectKey}:`, error);
+    }
   }
 };
