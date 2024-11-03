@@ -3,7 +3,9 @@ import {
   DynamoDBClient,
   GetItemCommand,
   ScanCommand,
+  PutItemCommand,
 } from '@aws-sdk/client-dynamodb';
+import { v4 as uuidv4 } from 'uuid';
 
 const dynamoDB = new DynamoDBClient({ region: 'us-west-2' });
 const productsTable = process.env.PRODUCTS_TABLE || 'Products';
@@ -124,6 +126,75 @@ export const getProductsById: Handler = async (event) => {
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
       body: JSON.stringify({ error: 'Failed to retrieve product' }),
+    };
+  }
+};
+
+// Lambda function to create a product
+export const createProduct: Handler = async (event) => {
+  try {
+    const { title, description, price, count } = JSON.parse(event.body || '{}');
+
+    if (!title || !price || count === undefined) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        },
+        body: JSON.stringify({
+          message: 'Title, price, and count are required fields.',
+        }),
+      };
+    }
+
+    const productId = uuidv4();
+
+    // Add product data to the Products table
+    const productCommand = new PutItemCommand({
+      TableName: productsTable,
+      Item: {
+        id: { S: productId },
+        title: { S: title },
+        description: { S: description || '' },
+        price: { N: price.toString() },
+      },
+    });
+    await dynamoDB.send(productCommand);
+
+    // Add stock data to the Stock table
+    const stockCommand = new PutItemCommand({
+      TableName: stockTable,
+      Item: {
+        product_id: { S: productId },
+        count: { N: count.toString() },
+      },
+    });
+    await dynamoDB.send(stockCommand);
+
+    return {
+      statusCode: 201,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+      body: JSON.stringify({
+        message: 'Product created successfully',
+        id: productId,
+      }),
+    };
+  } catch (error) {
+    console.error('Error creating product:', error);
+    return {
+      statusCode: 500,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+      body: JSON.stringify({ error: 'Error creating product' }),
     };
   }
 };

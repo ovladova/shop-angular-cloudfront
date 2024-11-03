@@ -53,12 +53,30 @@ export class ProductServiceStack extends cdk.Stack {
       },
     );
 
-    // Grant permissions for Lambdas to read from the tables
+    // Define the createProduct Lambda function
+    const createProductLambda = new lambda.Function(
+      this,
+      'createProductLambda',
+      {
+        runtime: lambda.Runtime.NODEJS_20_X,
+        handler: 'handlers.createProduct',
+        code: lambda.Code.fromAsset(path.join(__dirname, './')),
+        memorySize: 1024,
+        timeout: cdk.Duration.seconds(5),
+        environment: {
+          PRODUCTS_TABLE: productsTable.tableName,
+          STOCK_TABLE: stockTable.tableName,
+        },
+      },
+    );
+
+    // Grant permissions for Lambdas to read/write from the tables
     productsTable.grantReadData(getProductsListLambda);
     productsTable.grantReadData(getProductByIdLambda);
-
+    productsTable.grantWriteData(createProductLambda);
     stockTable.grantReadData(getProductsListLambda);
     stockTable.grantReadData(getProductByIdLambda);
+    stockTable.grantWriteData(createProductLambda);
 
     // API Gateway setup
     const api = new apigateway.RestApi(this, 'ProductServiceApi', {
@@ -67,6 +85,7 @@ export class ProductServiceStack extends cdk.Stack {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization'],
       },
     });
 
@@ -75,6 +94,10 @@ export class ProductServiceStack extends cdk.Stack {
     productsResource.addMethod(
       'GET',
       new apigateway.LambdaIntegration(getProductsListLambda),
+    );
+    productsResource.addMethod(
+      'POST',
+      new apigateway.LambdaIntegration(createProductLambda),
     );
 
     // /products/{productId} endpoint for GET method
