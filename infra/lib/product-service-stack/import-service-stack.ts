@@ -6,6 +6,7 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as path from 'path';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class ImportServiceStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -17,6 +18,19 @@ export class ImportServiceStack extends cdk.Stack {
       autoDeleteObjects: true,
     });
 
+    // Import the SQS queue
+    const catalogItemsQueueArn = cdk.Fn.importValue('CatalogItemsQueueArn');
+    const catalogItemsQueueUrl = cdk.Fn.importValue('CatalogItemsQueueUrl');
+
+    const catalogItemsQueue = sqs.Queue.fromQueueAttributes(
+      this,
+      'CatalogItemsQueue',
+      {
+        queueArn: catalogItemsQueueArn,
+        queueUrl: catalogItemsQueueUrl,
+      },
+    );
+
     // Define the Lambda function for importing files
     const importProductsFileLambda = new lambda.Function(
       this,
@@ -27,6 +41,7 @@ export class ImportServiceStack extends cdk.Stack {
         code: lambda.Code.fromAsset(path.join(__dirname, './')),
         environment: {
           BUCKET_NAME: importBucket.bucketName,
+          CATALOG_ITEMS_QUEUE_URL: catalogItemsQueueUrl,
         },
       },
     );
@@ -52,12 +67,16 @@ export class ImportServiceStack extends cdk.Stack {
         code: lambda.Code.fromAsset(path.join(__dirname, './')),
         environment: {
           BUCKET_NAME: importBucket.bucketName,
+          CATALOG_ITEMS_QUEUE_URL: catalogItemsQueueUrl,
         },
       },
     );
 
     // Grant S3 read permissions to the importFileParser Lambda
     importBucket.grantRead(importFileParserLambda);
+
+    // Grant permission to send messages to the SQS queue
+    catalogItemsQueue.grantSendMessages(importFileParserLambda);
 
     // Set up S3 trigger for the uploaded folder in the import bucket
     importBucket.addEventNotification(

@@ -1,4 +1,11 @@
-import { Handler, APIGatewayProxyEvent, S3Event, S3Handler } from 'aws-lambda';
+import {
+  Handler,
+  APIGatewayProxyEvent,
+  S3Event,
+  S3Handler,
+  SQSEvent,
+} from 'aws-lambda';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import {
   DynamoDBClient,
   GetItemCommand,
@@ -9,6 +16,7 @@ import * as csv from 'csv-parser';
 import * as stream from 'stream';
 import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
+import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 
 const pipeline = promisify(stream.pipeline);
 
@@ -24,6 +32,73 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3Client = new S3Client({ region: 'us-west-2' });
 const bucketName = process.env.BUCKET_NAME || '';
+
+const sqsClient = new SQSClient({ region: 'us-west-2' });
+const queueUrl = process.env.CATALOG_ITEMS_QUEUE_URL || '';
+
+const snsClient = new SNSClient({ region: 'us-west-2' });
+
+export const catalogBatchProcess: Handler = async (event: SQSEvent) => {
+  const topicArn = process.env.CREATE_PRODUCT_TOPIC_ARN || '';
+
+  for (const record of event.Records) {
+    try {
+      const product = JSON.parse(record.body);
+
+      const { title, description, price, count } = product;
+
+      if (!title || !price || count === undefined) {
+        console.error('Invalid product data:', product);
+        continue;
+      }
+
+      const productId = uuidv4();
+
+      // Add product data to the Products table
+      const productCommand = new PutItemCommand({
+        TableName: productsTable,
+        Item: {
+          id: { S: productId },
+          title: { S: title },
+          description: { S: description || '' },
+          price: { N: price.toString() },
+        },
+      });
+      await dynamoDB.send(productCommand);
+
+      // Add stock data to the Stock table
+      const stockCommand = new PutItemCommand({
+        TableName: stockTable,
+        Item: {
+          product_id: { S: productId },
+          count: { N: count.toString() },
+        },
+      });
+      await dynamoDB.send(stockCommand);
+
+      console.log(`Successfully processed product: ${title}`);
+
+      // Publish a message to the SNS topic
+      await snsClient.send(
+        new PublishCommand({
+          TopicArn: topicArn,
+          Subject: 'New Product Created',
+          Message: `Product ${title} has been created with ID ${productId}.`,
+          MessageAttributes: {
+            price: {
+              DataType: 'Number',
+              StringValue: price.toString(),
+            },
+          },
+        }),
+      );
+
+      console.log(`SNS message sent for product: ${title}`);
+    } catch (error) {
+      console.error('Error processing SQS message:', error);
+    }
+  }
+};
 
 // Lambda function to retrieve the full array of products
 export const getProductsList: Handler = async () => {
@@ -271,24 +346,36 @@ export const importFileParser: S3Handler = async (event: S3Event) => {
       });
 
       const response = await s3Client.send(getObjectCommand);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const results: any[] = [];
 
       await pipeline(
         response.Body as stream.Readable,
         csv(),
         new stream.Writable({
           objectMode: true,
-          write(data, _, callback) {
-            console.log('Parsed record:', data);
-            results.push(data);
-            callback();
+          async write(data, _, callback) {
+            try {
+              console.log('Sending message to SQS:', data);
+              await sqsClient.send(
+                new SendMessageCommand({
+                  QueueUrl: queueUrl,
+                  MessageBody: JSON.stringify(data),
+                }),
+              );
+              callback();
+            } catch (err) {
+              console.error('Error sending message to SQS:', err);
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-expect-error
+              callback(err);
+            }
           },
         }),
       );
 
-      console.log('Completed parsing file:', objectKey);
-      console.log('Parsed records:', results);
+      console.log(
+        'Completed parsing and sending messages for file:',
+        objectKey,
+      );
     } catch (error) {
       console.error(`Error processing file ${objectKey}:`, error);
     }
