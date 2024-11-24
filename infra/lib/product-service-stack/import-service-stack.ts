@@ -12,7 +12,7 @@ export class ImportServiceStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Define the S3 bucket
+    // Define the S3 bucket for importing files
     const importBucket = new s3.Bucket(this, 'ImportBucket', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
@@ -21,7 +21,6 @@ export class ImportServiceStack extends cdk.Stack {
     // Import the SQS queue
     const catalogItemsQueueArn = cdk.Fn.importValue('CatalogItemsQueueArn');
     const catalogItemsQueueUrl = cdk.Fn.importValue('CatalogItemsQueueUrl');
-
     const catalogItemsQueue = sqs.Queue.fromQueueAttributes(
       this,
       'CatalogItemsQueue',
@@ -34,7 +33,7 @@ export class ImportServiceStack extends cdk.Stack {
     // Define the Lambda function for importing files
     const importProductsFileLambda = new lambda.Function(
       this,
-      'importProductsFileLambda',
+      'ImportProductsFileLambda',
       {
         runtime: lambda.Runtime.NODEJS_20_X,
         handler: 'handlers.importProductsFile',
@@ -57,10 +56,10 @@ export class ImportServiceStack extends cdk.Stack {
       }),
     );
 
-    // Define the importFileParser Lambda function
+    // Define the Lambda function for parsing imported files
     const importFileParserLambda = new lambda.Function(
       this,
-      'importFileParserLambda',
+      'ImportFileParserLambda',
       {
         runtime: lambda.Runtime.NODEJS_20_X,
         handler: 'handlers.importFileParser',
@@ -72,20 +71,20 @@ export class ImportServiceStack extends cdk.Stack {
       },
     );
 
-    // Grant S3 read permissions to the importFileParser Lambda
+    // Grant S3 read permissions to the parser Lambda
     importBucket.grantRead(importFileParserLambda);
 
     // Grant permission to send messages to the SQS queue
     catalogItemsQueue.grantSendMessages(importFileParserLambda);
 
-    // Set up S3 trigger for the uploaded folder in the import bucket
+    // Set up S3 trigger for the `uploaded/` folder in the import bucket
     importBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.LambdaDestination(importFileParserLambda),
       { prefix: 'uploaded/' },
     );
 
-    // API Gateway setup for the import endpoint
+    // API Gateway setup for the Import Service
     const api = new apigateway.RestApi(this, 'ImportServiceApi', {
       restApiName: 'Import Service',
       description: 'This service handles product import operations.',
@@ -95,11 +94,31 @@ export class ImportServiceStack extends cdk.Stack {
       },
     });
 
-    // /import endpoint for GET method
+    // Import the Basic Authorizer Lambda function ARN
+    const basicAuthorizerLambdaArn = cdk.Fn.importValue(
+      'BasicAuthorizerLambdaArn',
+    );
+    const basicAuthorizer = new apigateway.TokenAuthorizer(
+      this,
+      'ImportAuthorizer',
+      {
+        handler: lambda.Function.fromFunctionArn(
+          this,
+          'BasicAuthorizer',
+          basicAuthorizerLambdaArn,
+        ),
+      },
+    );
+
+    // Add /import endpoint to API Gateway with authorizer
     const importResource = api.root.addResource('import');
     importResource.addMethod(
       'GET',
       new apigateway.LambdaIntegration(importProductsFileLambda),
+      {
+        authorizer: basicAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
+      },
     );
 
     // Output the API endpoint
