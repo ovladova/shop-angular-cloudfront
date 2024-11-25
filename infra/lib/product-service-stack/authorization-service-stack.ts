@@ -17,7 +17,7 @@ export class AuthorizationServiceStack extends cdk.Stack {
         handler: 'handlers.basicAuthorizer',
         code: lambda.Code.fromAsset(path.join(__dirname, './')),
         environment: {
-          ovladova: process.env.TEST_PASSWORD || 'default_password',
+          ovladova: process.env.ovladova || 'TEST_PASSWORD',
         },
       },
     );
