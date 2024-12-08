@@ -6,27 +6,41 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as path from 'path';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class ImportServiceStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Define the S3 bucket
+    // Define the S3 bucket for importing files
     const importBucket = new s3.Bucket(this, 'ImportBucket', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
 
+    // Import the SQS queue
+    const catalogItemsQueueArn = cdk.Fn.importValue('CatalogItemsQueueArn');
+    const catalogItemsQueueUrl = cdk.Fn.importValue('CatalogItemsQueueUrl');
+    const catalogItemsQueue = sqs.Queue.fromQueueAttributes(
+      this,
+      'CatalogItemsQueue',
+      {
+        queueArn: catalogItemsQueueArn,
+        queueUrl: catalogItemsQueueUrl,
+      },
+    );
+
     // Define the Lambda function for importing files
     const importProductsFileLambda = new lambda.Function(
       this,
-      'importProductsFileLambda',
+      'ImportProductsFileLambda',
       {
         runtime: lambda.Runtime.NODEJS_20_X,
         handler: 'handlers.importProductsFile',
         code: lambda.Code.fromAsset(path.join(__dirname, './')),
         environment: {
           BUCKET_NAME: importBucket.bucketName,
+          CATALOG_ITEMS_QUEUE_URL: catalogItemsQueueUrl,
         },
       },
     );
@@ -42,31 +56,35 @@ export class ImportServiceStack extends cdk.Stack {
       }),
     );
 
-    // Define the importFileParser Lambda function
+    // Define the Lambda function for parsing imported files
     const importFileParserLambda = new lambda.Function(
       this,
-      'importFileParserLambda',
+      'ImportFileParserLambda',
       {
         runtime: lambda.Runtime.NODEJS_20_X,
         handler: 'handlers.importFileParser',
         code: lambda.Code.fromAsset(path.join(__dirname, './')),
         environment: {
           BUCKET_NAME: importBucket.bucketName,
+          CATALOG_ITEMS_QUEUE_URL: catalogItemsQueueUrl,
         },
       },
     );
 
-    // Grant S3 read permissions to the importFileParser Lambda
+    // Grant S3 read permissions to the parser Lambda
     importBucket.grantRead(importFileParserLambda);
 
-    // Set up S3 trigger for the uploaded folder in the import bucket
+    // Grant permission to send messages to the SQS queue
+    catalogItemsQueue.grantSendMessages(importFileParserLambda);
+
+    // Set up S3 trigger for the `uploaded/` folder in the import bucket
     importBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.LambdaDestination(importFileParserLambda),
       { prefix: 'uploaded/' },
     );
 
-    // API Gateway setup for the import endpoint
+    // API Gateway setup for the Import Service
     const api = new apigateway.RestApi(this, 'ImportServiceApi', {
       restApiName: 'Import Service',
       description: 'This service handles product import operations.',
@@ -76,11 +94,31 @@ export class ImportServiceStack extends cdk.Stack {
       },
     });
 
-    // /import endpoint for GET method
+    // Import the Basic Authorizer Lambda function ARN
+    const basicAuthorizerLambdaArn = cdk.Fn.importValue(
+      'BasicAuthorizerLambdaArn',
+    );
+    const basicAuthorizer = new apigateway.TokenAuthorizer(
+      this,
+      'ImportAuthorizer',
+      {
+        handler: lambda.Function.fromFunctionArn(
+          this,
+          'BasicAuthorizer',
+          basicAuthorizerLambdaArn,
+        ),
+      },
+    );
+
+    // Add /import endpoint to API Gateway with authorizer
     const importResource = api.root.addResource('import');
     importResource.addMethod(
       'GET',
       new apigateway.LambdaIntegration(importProductsFileLambda),
+      {
+        authorizer: basicAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
+      },
     );
 
     // Output the API endpoint
