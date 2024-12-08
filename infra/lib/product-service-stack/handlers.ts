@@ -4,6 +4,8 @@ import {
   S3Event,
   S3Handler,
   SQSEvent,
+  APIGatewayAuthorizerResult,
+  APIGatewayTokenAuthorizerEvent,
 } from 'aws-lambda';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import {
@@ -37,6 +39,55 @@ const sqsClient = new SQSClient({ region: 'us-west-2' });
 const queueUrl = process.env.CATALOG_ITEMS_QUEUE_URL || '';
 
 const snsClient = new SNSClient({ region: 'us-west-2' });
+
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+export const basicAuthorizer = async (
+  event: APIGatewayTokenAuthorizerEvent,
+): Promise<APIGatewayAuthorizerResult> => {
+  console.log('Event: ', JSON.stringify(event));
+
+  if (!event.authorizationToken) {
+    throw new Error('Unauthorized');
+  }
+
+  const authToken = event.authorizationToken.split(' ')[1]; // Basic <base64encoded>
+  if (!authToken) {
+    throw new Error('Unauthorized');
+  }
+
+  const decodedToken = Buffer.from(authToken, 'base64').toString('utf-8');
+  const [username, password] = decodedToken.split(':');
+
+  const envPassword = process.env[username];
+
+  if (envPassword && envPassword === password) {
+    return generatePolicy(username, 'Allow', event.methodArn);
+  }
+
+  throw new Error('Unauthorized');
+};
+
+const generatePolicy = (
+  principalId: string,
+  effect: 'Allow' | 'Deny', // Explicitly define allowed values
+  resource: string,
+): APIGatewayAuthorizerResult => {
+  return {
+    principalId,
+    policyDocument: {
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Action: 'execute-api:Invoke',
+          Effect: effect, // `effect` must now be either "Allow" or "Deny"
+          Resource: resource,
+        },
+      ],
+    },
+  };
+};
 
 export const catalogBatchProcess: Handler = async (event: SQSEvent) => {
   const topicArn = process.env.CREATE_PRODUCT_TOPIC_ARN || '';
