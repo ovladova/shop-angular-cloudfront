@@ -1,4 +1,5 @@
 import { Provider } from '@angular/core';
+import {AuthInterceptor} from "./app/core/interceptors/auth.interceptor";
 
 import { environment } from './environments/environment';
 import { AppComponent } from './app/app.component';
@@ -18,6 +19,11 @@ const interceptors: Provider[] = [
   {
     provide: HTTP_INTERCEPTORS,
     useClass: ErrorPrintInterceptor,
+    multi: true,
+  },
+  {
+    provide: HTTP_INTERCEPTORS,
+    useClass: AuthInterceptor,
     multi: true,
   },
 ];

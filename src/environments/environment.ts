@@ -9,17 +9,21 @@ export const environment: Config = {
   apiEndpoints: {
     product: 'https://.execute-api.eu-west-1.amazonaws.com/dev',
     order: 'https://.execute-api.eu-west-1.amazonaws.com/dev',
-    import: 'https://.execute-api.eu-west-1.amazonaws.com/dev',
+    import: 'https://os1p4us77g.execute-api.us-west-2.amazonaws.com/prod',
     bff: 'https://r04yguceki.execute-api.us-west-2.amazonaws.com/prod',
-    cart: 'https://.execute-api.eu-west-1.amazonaws.com/dev',
+    cart: ' https://0ht2qe14f5.execute-api.us-west-2.amazonaws.com/prod',
   },
   apiEndpointsEnabled: {
-    product: false,
-    order: false,
-    import: false,
+    product: true,
+    order: true,
+    import: true,
     bff: true,
-    cart: false,
+    cart: true,
   },
+  user: {
+    username: 'ovladova',
+    password: 'TEST_PASSWORD',
+  }
 };
 
 /*
