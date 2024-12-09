@@ -1,13 +1,14 @@
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
-import express from 'express';
-import serverless from 'serverless-http';
 import { AppModule } from './app.module';
 
-let server: ReturnType<typeof serverless> | null = null;
+const express = require('express');
+const serverless = require('serverless-http');
+
+let server: any = null;
 
 async function bootstrap() {
-  const expressApp = express(); // now `express` is a default import and callable
+  const expressApp = express();
   const app = await NestFactory.create(AppModule, new ExpressAdapter(expressApp));
 
   app.enableCors({
