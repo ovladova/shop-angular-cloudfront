@@ -3,8 +3,10 @@ import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { DeployWebAppStack } from '../lib/deploy-web-app-stack';
 import { HelloSomethingStack } from '../lib/hello-lambda/hello-lambda-stack';
+import { AuthorizationServiceStack } from "../lib/product-service-stack/authorization-service-stack";
 import { ImportServiceStack } from '../lib/product-service-stack/import-service-stack';
 import { ProductServiceStack } from '../lib/product-service-stack/product-service-stack';
+import { LambdaNestAppStack } from "../lib/rds/lambda-nest-app-stack";
 
 const app = new cdk.App();
 new DeployWebAppStack(app, 'DeployWebAppStack', {
@@ -21,5 +23,12 @@ new DeployWebAppStack(app, 'DeployWebAppStack', {
 });
 
 new HelloSomethingStack(app, 'HelloSomethingStack', {});
+new AuthorizationServiceStack(app, 'AuthorizationServiceStack', {});
 new ProductServiceStack(app, 'ProductServiceStack', {});
 new ImportServiceStack(app, 'ImportServiceStack', {});
+
+// Your new Nest-based Lambda + API Gateway stack
+new LambdaNestAppStack(app, 'LambdaNestAppStack', {
+  // Optional: specify env if needed
+  // env: { account: 'xxx', region: 'us-east-1' }
+});
